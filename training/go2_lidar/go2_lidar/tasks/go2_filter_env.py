@@ -39,7 +39,7 @@ class Go2FilterEnv(DirectRLEnv):
         print("Initializing training environment...")
         super().__init__(cfg, render_mode, **kwargs)
 
-        loco_policy_path = "./logs/rsl_rl/go2_lidar/loco_1/exported/policy.pt"
+        loco_policy_path = self.cfg.loco_policy or "./logs/rsl_rl/go2_lidar/loco_1/exported/policy.pt"
         print(f"Loading locomotion policy from: {loco_policy_path}")
         self._loco_policy = torch.jit.load(loco_policy_path)
         self._loco_policy.to(self.device).eval()
@@ -62,15 +62,16 @@ class Go2FilterEnv(DirectRLEnv):
         self._wait_for_key()
 
         self._ray_predictor = None
-        try:
-            self._ray_predictor = torch.jit.load("./ray_predictor/ray_predictor/ray_predictor.pt")
-            self._ray_predictor.to(self.device).eval()
-            for param in self._ray_predictor.parameters():
-                param.requires_grad = False
-            print("Ray predictor model loaded:")
-            print(self._ray_predictor)
-        except Exception:
-            print("Failed to load ray predictor model. Ray prediction will not be used.")
+        if getattr(self.cfg, "load_legacy_ray_predictor", True):
+            try:
+                self._ray_predictor = torch.jit.load("./ray_predictor/ray_predictor/ray_predictor.pt")
+                self._ray_predictor.to(self.device).eval()
+                for param in self._ray_predictor.parameters():
+                    param.requires_grad = False
+                print("Ray predictor model loaded:")
+                print(self._ray_predictor)
+            except Exception:
+                print("Failed to load ray predictor model. Ray prediction will not be used.")
 
         print(f"num ray centers: {self.cfg.num_ray_centers}")
         self._wait_for_key()
@@ -209,8 +210,8 @@ class Go2FilterEnv(DirectRLEnv):
         self._contact_sensor = ContactSensor(self.cfg.contact_sensor)
         self.scene.sensors["contact_sensor"] = self._contact_sensor
 
-        self.num_terrain_rows = 10
-        self.num_terrain_cols = 10
+        self.num_terrain_rows = self.cfg.terrain.terrain_generator.num_rows
+        self.num_terrain_cols = self.cfg.terrain.terrain_generator.num_cols
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing

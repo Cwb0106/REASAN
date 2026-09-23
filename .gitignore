@@ -69,4 +69,7 @@ output.txt
 # *.pt
 # *.onnx
 
+# ResidualGuard verification and training artifacts (source/configs are tracked separately)
+training/logs/residualguard/
+
 .github

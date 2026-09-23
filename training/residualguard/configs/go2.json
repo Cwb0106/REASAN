@@ -1,0 +1,86 @@
+{
+  "risk": {
+    "a0": 0.52,
+    "b0": 0.38,
+    "tau_x": 0.15,
+    "tau_y": 0.15,
+    "margin_max": 0.3,
+    "r0": 0.38,
+    "alpha": 1.5,
+    "tangent_gain": 1.0,
+    "allowance_max": 3.0,
+    "velocity_epsilon": 0.05,
+    "range_epsilon": 1e-06,
+    "violation_scale": 1.0,
+    "saturation": 1.0,
+    "concentration": 4.0,
+    "pool_radius": 2,
+    "proxy_gain": 0.5,
+    "mode": "dcr",
+    "ttc_horizon": 1.5
+  },
+  "control": {
+    "limits": [
+      2.5,
+      1.5,
+      3.0
+    ],
+    "nominal_ranges": [
+      1.5,
+      0.6,
+      1.0
+    ],
+    "residual_scale": [
+      1.0,
+      0.6,
+      1.0
+    ],
+    "beta": 0.4,
+    "dt": 0.02,
+    "max_range": 4.0,
+    "history_frames": 5,
+    "history_dim": 45,
+    "velocity_scale": [
+      2.5,
+      1.5,
+      1.0
+    ],
+    "gate_power": 2.0,
+    "tracking_weight": 4.0,
+    "tracking_sigma": 0.25,
+    "direction_weight": 1.0,
+    "intervention_weight": 1.0,
+    "smoothness_weight": 0.05,
+    "overflow_weight": 5.0,
+    "risk_weight": 8.0,
+    "failure_weight": 20.0,
+    "regularization_weight": 0.02,
+    "regularization_epsilon": [
+      0.2,
+      0.15,
+      0.3
+    ]
+  },
+  "ppo": {
+    "seed": 42,
+    "num_steps": 24,
+    "epochs": 5,
+    "mini_batches": 4,
+    "learning_rate": 0.0003,
+    "encoder_learning_rate": 0.001,
+    "encoder_epochs": 2,
+    "encoder_batch_size": 512,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip": 0.2,
+    "value_weight": 1.0,
+    "entropy_weight": 0.005,
+    "max_grad_norm": 1.0,
+    "desired_kl": 0.01,
+    "initial_std": 0.35,
+    "exploration_min": 0.5,
+    "exploration_max": 1.5,
+    "save_interval": 100,
+    "use_response_latent": true
+  }
+}

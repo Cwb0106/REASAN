@@ -1,5 +1,14 @@
 import gymnasium as gym
 
+gym.register(
+    id="Unitree-Go2-ResidualGuard",
+    entry_point=f"{__name__}.go2_residualguard_env:Go2ResidualGuardEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.go2_residualguard_env_cfg:Go2ResidualGuardEnvCfg",
+    },
+)
+
 # flake8: noqa F401
 from . import (
     go2_filter_env,

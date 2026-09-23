@@ -1,0 +1,17 @@
+# REASAN with Python 3.10 and Isaac Sim 4.5.0.
+torch==2.7.0+cu128
+torchvision==0.22.0+cu128
+numpy==1.26.4
+gymnasium==1.2.0
+stable-baselines3==2.7.0
+setuptools==80.9.0
+
+# Pinocchio and Eigen bindings compatible with NumPy 1.26.
+pin==2.7.0
+eigenpy==3.5.1
+
+# Existing rl-games 1.6.1 requires wandb < 0.13; this wandb release
+# needs the older protobuf runtime. Keep TensorBoard compatible too.
+wandb==0.12.16
+protobuf==3.20.3
+tensorboard==2.18.0
