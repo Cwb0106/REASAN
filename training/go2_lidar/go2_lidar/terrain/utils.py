@@ -772,8 +772,12 @@ def _create_composite_obstacle_nav(center_x, center_y, base_rotation, meshes_lis
 
 def _create_filter_obstacles(cfg, meshes_list):
     terrain_size = (cfg.size[0], cfg.size[1])
-    grid_size = 5
+    grid_size = int(cfg.obstacle_grid_size)
+    if grid_size < 0:
+        raise ValueError("obstacle_grid_size must be non-negative")
     obst_count = grid_size**2
+    if obst_count == 0:
+        return
     cell_size = np.array(terrain_size) / grid_size
     obst_centers = np.zeros((obst_count, 2))
     obst_centers[:, 0] = np.arange(obst_count) % grid_size * cell_size[0] + cell_size[0] / 2.0

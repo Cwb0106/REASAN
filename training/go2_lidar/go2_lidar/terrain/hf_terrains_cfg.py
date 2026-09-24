@@ -44,6 +44,9 @@ class HfRandomUniformTerrainCfg(HfTerrainBaseCfg):
     terrain_variant: str = MISSING
     """Choice from ["filter", "nav"]."""
 
+    obstacle_grid_size: int = 5
+    """Static obstacle clusters per terrain axis for the filter variant."""
+
     noise_range: tuple[float, float] = MISSING
     """The minimum and maximum height noise (i.e. along z) of the terrain (in m)."""
     noise_step: float = MISSING

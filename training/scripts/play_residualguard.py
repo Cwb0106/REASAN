@@ -61,6 +61,18 @@ def main():
         default=0.45,
         help="Distance at which the controller advances to the next waypoint",
     )
+    parser.add_argument(
+        "--dynamic-obstacle-speed",
+        type=float,
+        default=0.35,
+        help="Playback crossing-obstacle speed in metres per second",
+    )
+    parser.add_argument(
+        "--static-obstacle-grid-size",
+        type=int,
+        default=3,
+        help="Static obstacle clusters per terrain axis (3 means 3x3 clusters)",
+    )
     parser.add_argument("--video", action="store_true", help="Record an MP4 rollout")
     parser.add_argument("--video-length", type=int, default=500)
     parser.add_argument(
@@ -106,6 +118,10 @@ def main():
         parser.error("--waypoint-length and --waypoint-spacing must be positive")
     if args.waypoint_speed <= 0 or args.waypoint_tolerance <= 0:
         parser.error("--waypoint-speed and --waypoint-tolerance must be positive")
+    if args.dynamic_obstacle_speed <= 0:
+        parser.error("--dynamic-obstacle-speed must be positive")
+    if args.static_obstacle_grid_size < 0:
+        parser.error("--static-obstacle-grid-size must be non-negative")
     if args.video:
         args.steps = max(args.steps, args.video_length * args.num_videos)
     output = Path(args.output)
@@ -140,6 +156,9 @@ def main():
         env_cfg.min_active_obstacles = args.num_dynamic_obstacles
         env_cfg.terrain.terrain_generator.num_rows = args.terrain_size
         env_cfg.terrain.terrain_generator.num_cols = args.terrain_size
+        env_cfg.terrain.terrain_generator.sub_terrains[
+            "random_rough"
+        ].obstacle_grid_size = args.static_obstacle_grid_size
         env_cfg.terrain.visual_material = sim_utils.PreviewSurfaceCfg()
         # The default world camera frames the complete terrain, making the Go2
         # effectively invisible. Track environment 0's robot for playback/video.
@@ -250,19 +269,24 @@ def main():
 
             # Each obstacle crosses the route at a different progress point.  Its
             # speed is chosen so it reaches the route near the robot's nominal ETA.
-            lateral_distance = 1.2
             for obstacle_index, obstacle in enumerate(env._obstacles):
                 fraction = (obstacle_index + 1) / (env._num_obstacles + 1)
                 along = args.waypoint_length * fraction
+                eta = max(along / args.waypoint_speed, env.step_dt)
+                # Start slower obstacles closer to the route so each one still
+                # reaches its crossing point near the robot's nominal arrival.
+                lateral_distance = min(
+                    1.5, max(0.5, args.dynamic_obstacle_speed * eta)
+                )
                 crossing = root_xy + forward * along
                 sign = -1.0 if obstacle_index % 2 else 1.0
                 start_xy = crossing + sign * lateral_distance * side
                 target_xy = crossing - sign * lateral_distance * side
-                eta = max(along / args.waypoint_speed, env.step_dt)
-                speed = min(1.5, max(0.2, lateral_distance / eta))
                 env._obst_pos_xy_a[env_ids, obstacle_index] = start_xy
                 env._obst_pos_xy_b[env_ids, obstacle_index] = target_xy
-                env._obst_speed[env_ids, obstacle_index, 0] = speed
+                env._obst_speed[env_ids, obstacle_index, 0] = (
+                    args.dynamic_obstacle_speed
+                )
                 state = obstacle.data.root_state_w[env_ids].clone()
                 state[:, :2] = start_xy
                 state[:, 2] = 0.5
@@ -481,6 +505,9 @@ def main():
                 "waypoint_length_m": args.waypoint_length,
                 "waypoint_spacing_m": args.waypoint_spacing,
                 "waypoint_speed_mps": args.waypoint_speed,
+                "dynamic_obstacle_speed_mps": args.dynamic_obstacle_speed,
+                "static_obstacle_grid_size": args.static_obstacle_grid_size,
+                "static_obstacle_clusters": args.static_obstacle_grid_size**2,
             },
             "visualization": {
                 "red": "robot body-forward axis",
