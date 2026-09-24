@@ -333,6 +333,22 @@ python scripts/play_residualguard.py \
 
 加 `--gui` 显示窗口，`--nominal` 执行零残差参考；有限步后保存rollout.npz和summary.json。使用真正导出模型，断言执行命令一致，任何Ray-DCR调用会失败。这不是论文benchmark，不输出伪造SR/TP。
 
+训练尚未结束时也可直接加载任意训练checkpoint并在无界面模式录制MP4：
+
+```bash
+python scripts/play_residualguard.py \
+  --checkpoint logs/residualguard/go2_gt_env512/model_2000.pt \
+  --config logs/residualguard/go2_gt_env512/config.json \
+  --output logs/residualguard/go2_gt_env512/eval/model_2000 \
+  --num-envs 1 --steps 500 \
+  --video --video-length 500
+```
+
+视频保存在`<output>/videos/*.mp4`，同目录还会保存`rollout.npz`和`summary.json`。
+checkpoint与config、locomotion policy及感知来源必须匹配；预测射线checkpoint还必须传入训练时的
+`--clearance-checkpoint`。单卡上同时运行训练和第二个Isaac Sim会争用GPU/CPU，正式训练期间优先在
+另一张GPU或单独算力任务中录制。
+
 消融应独立重新训练：
 
 | 消融 | 配置/开关 |

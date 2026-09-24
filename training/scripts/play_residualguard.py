@@ -5,6 +5,7 @@ This is a playback diagnostic on REASAN terrain, not the paper's paired benchmar
 """
 
 import argparse
+from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
@@ -17,8 +18,11 @@ def main():
     from isaaclab.app import AppLauncher
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--policy", required=True, help="exported/policy.pt (TorchScript)"
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--policy", help="exported/policy.pt (TorchScript)")
+    source.add_argument(
+        "--checkpoint",
+        help="Training checkpoint such as model_2000.pt; converted in memory for playback",
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--output", required=True)
@@ -27,6 +31,8 @@ def main():
     parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--terrain-size", type=int, default=10)
     parser.add_argument("--episode-seconds", type=float, default=9.0)
+    parser.add_argument("--video", action="store_true", help="Record an MP4 rollout")
+    parser.add_argument("--video-length", type=int, default=500)
     parser.add_argument(
         "--nominal",
         action="store_true",
@@ -35,10 +41,15 @@ def main():
     parser.add_argument("--gui", action="store_true")
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
+    if args.video:
+        args.enable_cameras = True
     args.headless = not args.gui
+    if args.video and args.video_length > args.steps:
+        parser.error("--video-length must be less than or equal to --steps")
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     app = AppLauncher(args).app
+    gym_env = None
     env = None
     try:
         import gymnasium as gym
@@ -49,6 +60,7 @@ def main():
         import go2_lidar.tasks.go2_residualguard_env as env_module
         from go2_lidar.tasks.go2_residualguard_env_cfg import Go2ResidualGuardEnvCfg
         from residualguard.config import Config
+        from residualguard.models import DeploymentPolicy, ResidualActorCritic
         from residualguard.runner import seed_everything
 
         cfg = Config.load(args.config)
@@ -70,13 +82,49 @@ def main():
             raise AssertionError("Deployment must never evaluate Ray-DCR")
 
         env_module.ray_dcr = forbidden_risk
-        env = gym.make("Unitree-Go2-ResidualGuard", cfg=env_cfg).unwrapped
-        policy = torch.jit.load(args.policy, map_location=args.device).eval()
+        gym_env = gym.make(
+            "Unitree-Go2-ResidualGuard",
+            cfg=env_cfg,
+            render_mode="rgb_array" if args.video else None,
+        )
+        env = gym_env.unwrapped
+        if args.checkpoint:
+            checkpoint = torch.load(
+                args.checkpoint, map_location=args.device, weights_only=False
+            )
+            if json.dumps(checkpoint["config"], sort_keys=True) != json.dumps(
+                asdict(cfg), sort_keys=True
+            ):
+                raise ValueError(
+                    "Checkpoint config differs from --config; use the config.json saved with it"
+                )
+            if checkpoint.get("environment_metadata", {}) != env.reproduction_metadata:
+                raise ValueError(
+                    "Checkpoint locomotion or perception source differs from this environment"
+                )
+            actor_critic = ResidualActorCritic(cfg).to(args.device)
+            actor_critic.load_state_dict(checkpoint["model"])
+            policy = DeploymentPolicy(actor_critic, cfg).to(args.device).eval()
+            policy_source = Path(args.checkpoint).stem
+        else:
+            policy = torch.jit.load(args.policy, map_location=args.device).eval()
+            policy_source = Path(args.policy).stem
+        if args.video:
+            video_folder = output / "videos"
+            print(f"[INFO] Recording video to: {video_folder}", flush=True)
+            gym_env = gym.wrappers.RecordVideo(
+                gym_env,
+                video_folder=str(video_folder),
+                step_trigger=lambda step: step == 0,
+                video_length=args.video_length,
+                name_prefix=policy_source,
+                disable_logger=True,
+            )
         h = torch.zeros(1, env.num_envs, 256, device=args.device)
         c = torch.zeros_like(h)
         scale = torch.tensor(cfg.control.residual_scale, device=args.device)
         limits = torch.tensor(cfg.control.limits, device=args.device)
-        obs, _ = env.reset()
+        obs, _ = gym_env.reset()
         traces = {
             k: []
             for k in (
@@ -109,7 +157,7 @@ def main():
                     raw_action = (filtered - (1 - cfg.control.beta) * env.filtered) / (
                         cfg.control.beta * scale
                     )
-                obs, _, term, trunc, info = env.step(raw_action)
+                obs, _, term, trunc, info = gym_env.step(raw_action)
                 transition = info["residualguard"]
                 torch.testing.assert_close(
                     transition["executed_command"], expected, atol=2e-6, rtol=1e-5
@@ -153,11 +201,13 @@ def main():
             "note": "Playback diagnostic only; no benchmark success-rate or task-progress claim",
             "environment": env.reproduction_metadata,
         }
+        if args.video:
+            summary["video_folder"] = str((output / "videos").resolve())
         (output / "summary.json").write_text(json.dumps(summary, indent=2))
         print("PASS: " + json.dumps(summary), flush=True)
     finally:
-        if env is not None:
-            env.close()
+        if gym_env is not None:
+            gym_env.close()
         app.close()
 
 
