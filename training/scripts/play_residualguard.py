@@ -69,7 +69,7 @@ def main():
     parser.add_argument(
         "--no-direction-viz",
         action="store_true",
-        help="Hide heading, executed-command, and measured-velocity arrows",
+        help="Hide heading, waypoint-reference, executed-command, and goal markers",
     )
     parser.add_argument(
         "--camera-eye",
@@ -323,6 +323,10 @@ def main():
                 (env.executed[0, :2], torch.zeros(1, device=env.device))
             ).unsqueeze(0)
             executed_w = math_utils.quat_apply(yaw_quat, executed_b)[0] * 0.6
+            nominal_b = torch.cat(
+                (env._cmd_buffer[0, :2], torch.zeros(1, device=env.device))
+            ).unsqueeze(0)
+            nominal_w = math_utils.quat_apply(yaw_quat, nominal_b)[0] * 0.6
             starts, ends, colors, widths = [], [], [], []
 
             def add_arrow(vector, height, color, minimum_length=0.0):
@@ -370,8 +374,10 @@ def main():
                     width,
                 )
 
-            # Red: body-forward axis. Green: executed planar command.
+            # Red: body-forward axis. Blue: the obstacle-blind command supplied
+            # by the waypoint/VLN layer. Green: ResidualGuard's executed command.
             add_arrow(forward * 1.0, 0.65, (1.0, 0.1, 0.1, 1.0))
+            add_arrow(nominal_w, 0.95, (0.1, 0.4, 1.0, 1.0), 0.03)
             add_arrow(executed_w, 0.80, (0.1, 1.0, 0.1, 1.0), 0.03)
             # Blue: remaining waypoint route. Yellow: current waypoint.
             # Magenta: final destination.
@@ -478,8 +484,9 @@ def main():
             },
             "visualization": {
                 "red": "robot body-forward axis",
-                "green": "executed planar command",
-                "blue": "remaining waypoint route",
+                "blue_arrow": "obstacle-blind VLN/waypoint reference command",
+                "blue_route": "obstacle-blind remaining waypoint route",
+                "green": "ResidualGuard-corrected executed command",
                 "yellow": "current waypoint",
                 "magenta": "final destination",
             }
