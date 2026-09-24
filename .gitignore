@@ -73,3 +73,5 @@ output.txt
 training/logs/residualguard/
 
 .github
+# SwanLab project-local login credentials and state
+training/.swanlab/

@@ -2,6 +2,7 @@
 """Train ResidualGuard on the existing REASAN IsaacLab/Go2 stack."""
 
 import argparse
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -33,6 +34,22 @@ def main():
     parser.add_argument("--terrain-rows", type=int, default=10)
     parser.add_argument("--terrain-cols", type=int, default=10)
     parser.add_argument("--episode-seconds", type=float, default=9.0)
+    parser.add_argument(
+        "--swanlab-project",
+        help="Enable SwanLab logging and write runs to this project",
+    )
+    parser.add_argument("--swanlab-workspace")
+    parser.add_argument("--swanlab-experiment-name")
+    parser.add_argument("--swanlab-group")
+    parser.add_argument("--swanlab-id", help="Existing SwanLab run ID for resume")
+    parser.add_argument(
+        "--swanlab-resume", choices=("allow", "must", "never"), default=None
+    )
+    parser.add_argument(
+        "--swanlab-mode",
+        choices=("online", "offline", "local", "disabled"),
+        default="online",
+    )
     parser.add_argument("--gui", action="store_true")
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
@@ -64,6 +81,7 @@ def main():
         raise FileNotFoundError(args.clearance_checkpoint)
     app = AppLauncher(args).app
     env = None
+    tracker = None
     try:
         import gymnasium as gym
         import go2_lidar.tasks  # noqa: F401
@@ -92,7 +110,37 @@ def main():
         )
         dump_yaml(str(output / "env.yaml"), env_cfg)
         env = gym.make("Unitree-Go2-ResidualGuard", cfg=env_cfg).unwrapped
-        runner = ResidualGuardRunner(env, cfg, output, args.device)
+        if args.swanlab_project:
+            try:
+                import swanlab
+            except ModuleNotFoundError as error:
+                raise ModuleNotFoundError(
+                    "SwanLab logging requested. Install it with: python -m pip install swanlab"
+                ) from error
+            cli_config = {
+                key: value
+                if isinstance(value, (str, int, float, bool, type(None)))
+                else str(value)
+                for key, value in vars(args).items()
+            }
+            tracker = swanlab.init(
+                project=args.swanlab_project,
+                workspace=args.swanlab_workspace,
+                experiment_name=args.swanlab_experiment_name or output.name,
+                group=args.swanlab_group,
+                config={
+                    "residualguard": asdict(cfg),
+                    "cli": cli_config,
+                    "environment": env.reproduction_metadata,
+                },
+                logdir=str(output / "swanlab"),
+                mode=args.swanlab_mode,
+                id=args.swanlab_id,
+                resume=args.swanlab_resume,
+            )
+        runner = ResidualGuardRunner(
+            env, cfg, output, args.device, tracker=tracker
+        )
         if args.resume:
             runner.load(args.resume)
         runner.learn(args.iterations)
@@ -103,6 +151,8 @@ def main():
     finally:
         if env is not None:
             env.close()
+        if tracker is not None:
+            tracker.finish()
         app.close()
 
 

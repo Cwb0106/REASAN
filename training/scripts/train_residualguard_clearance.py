@@ -28,6 +28,22 @@ def main():
     )
     parser.add_argument("--resume", type=str)
     parser.add_argument("--no-motion-conditioning", action="store_true")
+    parser.add_argument(
+        "--swanlab-project",
+        help="Enable SwanLab logging and write runs to this project",
+    )
+    parser.add_argument("--swanlab-workspace")
+    parser.add_argument("--swanlab-experiment-name")
+    parser.add_argument("--swanlab-group")
+    parser.add_argument("--swanlab-id", help="Existing SwanLab run ID for resume")
+    parser.add_argument(
+        "--swanlab-resume", choices=("allow", "must", "never"), default=None
+    )
+    parser.add_argument(
+        "--swanlab-mode",
+        choices=("online", "offline", "local", "disabled"),
+        default="online",
+    )
     args = parser.parse_args()
     args.data = str(Path(args.data).resolve())
     seed_everything(args.seed)
@@ -35,6 +51,25 @@ def main():
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     (output / "training_config.json").write_text(json.dumps(vars(args), indent=2))
+    tracker = None
+    if args.swanlab_project:
+        try:
+            import swanlab
+        except ModuleNotFoundError as error:
+            raise ModuleNotFoundError(
+                "SwanLab logging requested. Install it with: python -m pip install swanlab"
+            ) from error
+        tracker = swanlab.init(
+            project=args.swanlab_project,
+            workspace=args.swanlab_workspace,
+            experiment_name=args.swanlab_experiment_name or output.name,
+            group=args.swanlab_group,
+            config=vars(args),
+            logdir=str(output / "swanlab"),
+            mode=args.swanlab_mode,
+            id=args.swanlab_id,
+            resume=args.swanlab_resume,
+        )
     train = ClearanceDataset(args.data, "train", args.seed)
     val = ClearanceDataset(args.data, "val", args.seed)
     assert train.selected_episodes.isdisjoint(val.selected_episodes)
@@ -114,6 +149,8 @@ def main():
             print(json.dumps(metrics), flush=True)
             with (output / "metrics.jsonl").open("a") as file:
                 file.write(json.dumps(metrics) + "\n")
+            if tracker is not None:
+                tracker.log(metrics, step=epoch + 1)
             checkpoint = {
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
@@ -134,6 +171,8 @@ def main():
     finally:
         train.close()
         val.close()
+        if tracker is not None:
+            tracker.finish()
 
 
 if __name__ == "__main__":

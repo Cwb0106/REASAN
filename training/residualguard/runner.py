@@ -38,7 +38,7 @@ def generalized_advantage(reward, values, done, last_value, gamma, lam):
 
 
 class ResidualGuardRunner:
-    def __init__(self, env, cfg: Config, log_dir, device="cpu"):
+    def __init__(self, env, cfg: Config, log_dir, device="cpu", tracker=None):
         self.env, self.cfg, self.device = env, cfg.validate(), torch.device(device)
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -55,6 +55,7 @@ class ResidualGuardRunner:
         self.starts = torch.ones(env.num_envs, dtype=torch.bool, device=self.device)
         self.cfg.save(self.log_dir / "config.json")
         self.environment_metadata = getattr(env, "reproduction_metadata", {})
+        self.tracker = tracker
         (self.log_dir / "environment_metadata.json").write_text(
             json.dumps(self.environment_metadata, indent=2)
         )
@@ -276,6 +277,8 @@ class ResidualGuardRunner:
             print(json.dumps(metrics), flush=True)
             with (self.log_dir / "metrics.jsonl").open("a") as file:
                 file.write(json.dumps(metrics) + "\n")
+            if self.tracker is not None:
+                self.tracker.log(metrics, step=self.iteration)
             if self.iteration % self.cfg.ppo.save_interval == 0:
                 self.save(self.log_dir / f"model_{self.iteration}.pt")
         self.save(self.log_dir / f"model_{self.iteration}.pt")

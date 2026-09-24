@@ -253,6 +253,48 @@ python scripts/train_residualguard.py \
   --num-envs 256 --iterations 2000 --log-dir logs/residualguard/go2_gt_resume
 ```
 
+### SwanLab实验记录
+
+ResidualGuard runner始终保留AFS中的`metrics.jsonl`、checkpoint和导出策略。传入
+`--swanlab-project`时，额外把标量和完整配置记录到SwanLab；不传该参数则不导入
+SwanLab，也不改变原训练行为。
+
+```bash
+# 只需安装一次。--isolated避免系统pip配置中的额外源影响安装。
+python -m pip --isolated install swanlab \
+  --index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+
+# 在共享服务器上把凭证限制在当前仓库；API Key不会进入训练参数。
+swanlab login --local
+
+python scripts/train_residualguard.py \
+  --config residualguard/configs/go2.json \
+  --num-envs 256 --iterations 20000 \
+  --log-dir logs/residualguard/go2_gt \
+  --swanlab-project residualguard \
+  --swanlab-experiment-name go2_gt_seed42
+```
+
+团队空间可追加`--swanlab-workspace <workspace_username>`，同一组实验可追加
+`--swanlab-group <group>`。服务器无法访问SwanLab时使用
+`--swanlab-mode offline`；日志保存在`<log-dir>/swanlab/run-*`，之后在能联网的
+机器上执行：
+
+```bash
+swanlab sync logs/residualguard/go2_gt/swanlab/run-*
+```
+
+恢复同一个SwanLab实验时，除训练checkpoint外，还需传入原实验ID：
+
+```bash
+--swanlab-id <experiment_id> --swanlab-resume must
+```
+
+感知训练入口支持同样的SwanLab参数。SwanLab公有云能够记录标量和配置，但
+`swanlab.save`上传checkpoint仅支持私有部署，因此模型继续以AFS文件为准。
+SwanLab当前视频接口只接受GIF、不接受MP4；训练入口本身没有视频记录，所以本次
+不增加转码和视频上传，播放生成的媒体继续保存在本地输出目录。
+
 ### 感知训练和预测射线闭环
 
 ```bash
