@@ -34,6 +34,22 @@ def main():
     parser.add_argument("--video", action="store_true", help="Record an MP4 rollout")
     parser.add_argument("--video-length", type=int, default=500)
     parser.add_argument(
+        "--camera-eye",
+        type=float,
+        nargs=3,
+        default=(3.0, 3.0, 2.0),
+        metavar=("X", "Y", "Z"),
+        help="Camera offset from the tracked robot root",
+    )
+    parser.add_argument(
+        "--camera-lookat",
+        type=float,
+        nargs=3,
+        default=(0.0, 0.0, 0.4),
+        metavar=("X", "Y", "Z"),
+        help="Camera target offset from the tracked robot root",
+    )
+    parser.add_argument(
         "--nominal",
         action="store_true",
         help="Zero residual reference on the same setup",
@@ -76,6 +92,13 @@ def main():
         env_cfg.terrain.terrain_generator.num_rows = args.terrain_size
         env_cfg.terrain.terrain_generator.num_cols = args.terrain_size
         env_cfg.terrain.visual_material = sim_utils.PreviewSurfaceCfg()
+        # The default world camera frames the complete terrain, making the Go2
+        # effectively invisible. Track environment 0's robot for playback/video.
+        env_cfg.viewer.origin_type = "asset_root"
+        env_cfg.viewer.env_index = 0
+        env_cfg.viewer.asset_name = "robot"
+        env_cfg.viewer.eye = tuple(args.camera_eye)
+        env_cfg.viewer.lookat = tuple(args.camera_lookat)
 
         # Runtime assertion: ANY accidental risk evaluation makes the playback fail.
         def forbidden_risk(*_args, **_kwargs):
