@@ -341,12 +341,15 @@ python scripts/play_residualguard.py \
   --config logs/residualguard/go2_gt_env512/config.json \
   --output logs/residualguard/go2_gt_env512/eval/model_2000 \
   --num-envs 1 --steps 500 \
-  --video --video-length 500
+  --video --video-length 500 --num-videos 5
 ```
 
 视频保存在`<output>/videos/*.mp4`，同目录还会保存`rollout.npz`和`summary.json`。
 播放相机默认以`(3, 3, 2)`米偏移跟随第0个环境的机器人，可用
 `--camera-eye X Y Z --camera-lookat X Y Z`调整构图。
+视频中的红色箭头表示机器人本体前向，绿色箭头表示实际执行的平面速度命令，蓝色箭头表示
+测得的平面速度；可用`--no-direction-viz`隐藏。`--num-videos 5`会自动把总播放步数扩展到
+至少`5 * video-length`并连续保存5段视频。
 checkpoint与config、locomotion policy及感知来源必须匹配；预测射线checkpoint还必须传入训练时的
 `--clearance-checkpoint`。单卡上同时运行训练和第二个Isaac Sim会争用GPU/CPU，正式训练期间优先在
 另一张GPU或单独算力任务中录制。
