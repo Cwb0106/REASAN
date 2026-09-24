@@ -227,7 +227,9 @@ class Go2FilterEnv(DirectRLEnv):
         self._terrain.terrain_levels[:] = 0
 
         if self.cfg.use_dynamic_obstacle:
-            self._num_obstacles = 3
+            self._num_obstacles = int(self.cfg.num_dynamic_obstacles)
+            if self._num_obstacles < 1:
+                raise ValueError("num_dynamic_obstacles must be positive")
         else:
             self._num_obstacles = 0
         print(f"number of dynamic obstacles: {self._num_obstacles}")

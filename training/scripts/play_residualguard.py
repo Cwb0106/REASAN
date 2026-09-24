@@ -31,6 +31,36 @@ def main():
     parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--terrain-size", type=int, default=10)
     parser.add_argument("--episode-seconds", type=float, default=9.0)
+    parser.add_argument(
+        "--num-dynamic-obstacles",
+        type=int,
+        default=3,
+        help="Number of moving obstacles active in every playback episode",
+    )
+    parser.add_argument(
+        "--waypoint-length",
+        type=float,
+        default=6.0,
+        help="Length in metres of the playback waypoint route",
+    )
+    parser.add_argument(
+        "--waypoint-spacing",
+        type=float,
+        default=1.0,
+        help="Spacing in metres between displayed waypoints",
+    )
+    parser.add_argument(
+        "--waypoint-speed",
+        type=float,
+        default=1.2,
+        help="Nominal planar speed commanded toward the current waypoint",
+    )
+    parser.add_argument(
+        "--waypoint-tolerance",
+        type=float,
+        default=0.45,
+        help="Distance at which the controller advances to the next waypoint",
+    )
     parser.add_argument("--video", action="store_true", help="Record an MP4 rollout")
     parser.add_argument("--video-length", type=int, default=500)
     parser.add_argument(
@@ -70,6 +100,12 @@ def main():
     args.headless = not args.gui
     if args.video_length <= 0 or args.num_videos <= 0:
         parser.error("--video-length and --num-videos must be positive")
+    if args.num_dynamic_obstacles < 3:
+        parser.error("--num-dynamic-obstacles must be at least 3 for dynamic playback")
+    if args.waypoint_length <= 0 or args.waypoint_spacing <= 0:
+        parser.error("--waypoint-length and --waypoint-spacing must be positive")
+    if args.waypoint_speed <= 0 or args.waypoint_tolerance <= 0:
+        parser.error("--waypoint-speed and --waypoint-tolerance must be positive")
     if args.video:
         args.steps = max(args.steps, args.video_length * args.num_videos)
     output = Path(args.output)
@@ -100,6 +136,8 @@ def main():
         env_cfg.residualguard_config = str(Path(args.config).resolve())
         env_cfg.clearance_checkpoint = args.clearance_checkpoint
         env_cfg.training_signals = False
+        env_cfg.num_dynamic_obstacles = args.num_dynamic_obstacles
+        env_cfg.min_active_obstacles = args.num_dynamic_obstacles
         env_cfg.terrain.terrain_generator.num_rows = args.terrain_size
         env_cfg.terrain.terrain_generator.num_cols = args.terrain_size
         env_cfg.terrain.visual_material = sim_utils.PreviewSurfaceCfg()
@@ -165,6 +203,114 @@ def main():
 
             debug_draw = _debug_draw.acquire_debug_draw_interface()
 
+        waypoint_paths = None
+        waypoint_indices = None
+        waypoint_episode_ids = None
+
+        def initialize_waypoint_scenarios(env_ids=None):
+            """Create world-frame routes and staggered crossing obstacles."""
+            nonlocal waypoint_paths, waypoint_indices, waypoint_episode_ids
+            if env_ids is None:
+                env_ids = torch.arange(env.num_envs, device=env.device)
+            if waypoint_paths is None:
+                waypoint_count = max(
+                    1, int(np.ceil(args.waypoint_length / args.waypoint_spacing))
+                )
+                waypoint_paths = torch.zeros(
+                    env.num_envs, waypoint_count, 2, device=env.device
+                )
+                waypoint_indices = torch.zeros(
+                    env.num_envs, dtype=torch.long, device=env.device
+                )
+                waypoint_episode_ids = torch.full(
+                    (env.num_envs,), -1, dtype=torch.long, device=env.device
+                )
+            root_xy = env._robot.data.root_pos_w[env_ids, :2]
+            yaw = math_utils.yaw_quat(env._robot.data.root_quat_w[env_ids])
+            forward3 = math_utils.quat_apply(
+                yaw,
+                torch.tensor([[1.0, 0.0, 0.0]], device=env.device).expand(
+                    len(env_ids), -1
+                ),
+            )
+            forward = forward3[:, :2]
+            side = torch.stack((-forward[:, 1], forward[:, 0]), dim=-1)
+            waypoint_count = waypoint_paths.shape[1]
+            distances = torch.linspace(
+                args.waypoint_length / waypoint_count,
+                args.waypoint_length,
+                waypoint_count,
+                device=env.device,
+            )
+            waypoint_paths[env_ids] = (
+                root_xy[:, None, :] + forward[:, None, :] * distances[None, :, None]
+            )
+            waypoint_indices[env_ids] = 0
+            waypoint_episode_ids[env_ids] = env.episode_id[env_ids]
+
+            # Each obstacle crosses the route at a different progress point.  Its
+            # speed is chosen so it reaches the route near the robot's nominal ETA.
+            lateral_distance = 1.2
+            for obstacle_index, obstacle in enumerate(env._obstacles):
+                fraction = (obstacle_index + 1) / (env._num_obstacles + 1)
+                along = args.waypoint_length * fraction
+                crossing = root_xy + forward * along
+                sign = -1.0 if obstacle_index % 2 else 1.0
+                start_xy = crossing + sign * lateral_distance * side
+                target_xy = crossing - sign * lateral_distance * side
+                eta = max(along / args.waypoint_speed, env.step_dt)
+                speed = min(1.5, max(0.2, lateral_distance / eta))
+                env._obst_pos_xy_a[env_ids, obstacle_index] = start_xy
+                env._obst_pos_xy_b[env_ids, obstacle_index] = target_xy
+                env._obst_speed[env_ids, obstacle_index, 0] = speed
+                state = obstacle.data.root_state_w[env_ids].clone()
+                state[:, :2] = start_xy
+                state[:, 2] = 0.5
+                state[:, 7:] = 0.0
+                obstacle.write_root_state_to_sim(state, env_ids)
+            env._num_active_obstacles[env_ids] = env._num_obstacles
+            env._no_obstacle_env[env_ids] = False
+
+        def update_waypoint_commands():
+            changed = env.episode_id != waypoint_episode_ids
+            if changed.any():
+                initialize_waypoint_scenarios(changed.nonzero().flatten())
+            root_xy = env._robot.data.root_pos_w[:, :2]
+            env_ids = torch.arange(env.num_envs, device=env.device)
+            target = waypoint_paths[env_ids, waypoint_indices]
+            distance = torch.linalg.norm(target - root_xy, dim=-1)
+            advance = (distance <= args.waypoint_tolerance) & (
+                waypoint_indices < waypoint_paths.shape[1] - 1
+            )
+            waypoint_indices[advance] += 1
+            target = waypoint_paths[env_ids, waypoint_indices]
+            delta_w = target - root_xy
+            distance = torch.linalg.norm(delta_w, dim=-1)
+            delta_b = math_utils.quat_apply_inverse(
+                math_utils.yaw_quat(env._robot.data.root_quat_w),
+                torch.cat(
+                    (delta_w, torch.zeros(env.num_envs, 1, device=env.device)),
+                    dim=-1,
+                ),
+            )[:, :2]
+            direction_b = delta_b / distance[:, None].clamp_min(1e-6)
+            speed = torch.minimum(
+                torch.full_like(distance, args.waypoint_speed),
+                1.5 * distance,
+            )
+            command = torch.zeros(env.num_envs, 3, device=env.device)
+            command[:, :2] = direction_b * speed[:, None]
+            command[:, 2] = torch.atan2(direction_b[:, 1], direction_b[:, 0]).clamp(
+                -1.0, 1.0
+            )
+            reached = (waypoint_indices == waypoint_paths.shape[1] - 1) & (
+                distance <= args.waypoint_tolerance
+            )
+            command[reached] = 0.0
+            env._cmd_buffer.copy_(command)
+            env._cmd_resample_accums.zero_()
+            return target
+
         def update_direction_visualization():
             if debug_draw is None:
                 return
@@ -177,9 +323,6 @@ def main():
                 (env.executed[0, :2], torch.zeros(1, device=env.device))
             ).unsqueeze(0)
             executed_w = math_utils.quat_apply(yaw_quat, executed_b)[0] * 0.6
-            velocity_w = env._robot.data.root_com_lin_vel_w[0].clone()
-            velocity_w[2] = 0.0
-            velocity_w *= 0.6
             starts, ends, colors, widths = [], [], [], []
 
             def add_arrow(vector, height, color, minimum_length=0.0):
@@ -200,17 +343,55 @@ def main():
                 colors.extend((color, color, color))
                 widths.extend((5.0, 5.0, 5.0))
 
+            def add_segment(start_xy, end_xy, height, color, width=4.0):
+                start = (float(start_xy[0]), float(start_xy[1]), height)
+                end = (float(end_xy[0]), float(end_xy[1]), height)
+                starts.append(start)
+                ends.append(end)
+                colors.append(color)
+                widths.append(width)
+
+            def add_cross(point_xy, height, color, radius, width=6.0):
+                x, y = float(point_xy[0]), float(point_xy[1])
+                add_segment((x - radius, y), (x + radius, y), height, color, width)
+                add_segment((x, y - radius), (x, y + radius), height, color, width)
+                add_segment(
+                    (x - 0.7 * radius, y - 0.7 * radius),
+                    (x + 0.7 * radius, y + 0.7 * radius),
+                    height,
+                    color,
+                    width,
+                )
+                add_segment(
+                    (x - 0.7 * radius, y + 0.7 * radius),
+                    (x + 0.7 * radius, y - 0.7 * radius),
+                    height,
+                    color,
+                    width,
+                )
+
             # Red: body-forward axis. Green: executed planar command.
-            # Blue: measured planar velocity.
             add_arrow(forward * 1.0, 0.65, (1.0, 0.1, 0.1, 1.0))
             add_arrow(executed_w, 0.80, (0.1, 1.0, 0.1, 1.0), 0.03)
-            add_arrow(velocity_w, 0.95, (0.1, 0.4, 1.0, 1.0), 0.03)
+            # Blue: remaining waypoint route. Yellow: current waypoint.
+            # Magenta: final destination.
+            path = waypoint_paths[0]
+            current_index = int(waypoint_indices[0])
+            previous = env._robot.data.root_pos_w[0, :2]
+            for point in path[current_index:]:
+                add_segment(previous, point, 0.10, (0.1, 0.4, 1.0, 1.0), 4.0)
+                add_cross(point, 0.12, (0.1, 0.4, 1.0, 1.0), 0.08, 3.0)
+                previous = point
+            add_cross(path[current_index], 0.16, (1.0, 0.85, 0.0, 1.0), 0.18)
+            add_cross(path[-1], 0.20, (1.0, 0.0, 1.0, 1.0), 0.30, 8.0)
             debug_draw.draw_lines(starts, ends, colors, widths)
         h = torch.zeros(1, env.num_envs, 256, device=args.device)
         c = torch.zeros_like(h)
         scale = torch.tensor(cfg.control.residual_scale, device=args.device)
         limits = torch.tensor(cfg.control.limits, device=args.device)
         obs, _ = gym_env.reset()
+        initialize_waypoint_scenarios()
+        update_waypoint_commands()
         update_direction_visualization()
         traces = {
             k: []
@@ -226,6 +407,7 @@ def main():
         }
         with torch.no_grad():
             for _ in range(args.steps):
+                update_waypoint_commands()
                 update_direction_visualization()
                 episode = env.episode_id.clone()
                 if args.nominal:
@@ -288,10 +470,18 @@ def main():
             "reset_assertions": "passed",
             "note": "Playback diagnostic only; no benchmark success-rate or task-progress claim",
             "environment": env.reproduction_metadata,
+            "playback_scenario": {
+                "dynamic_obstacles": args.num_dynamic_obstacles,
+                "waypoint_length_m": args.waypoint_length,
+                "waypoint_spacing_m": args.waypoint_spacing,
+                "waypoint_speed_mps": args.waypoint_speed,
+            },
             "visualization": {
                 "red": "robot body-forward axis",
                 "green": "executed planar command",
-                "blue": "measured planar velocity",
+                "blue": "remaining waypoint route",
+                "yellow": "current waypoint",
+                "magenta": "final destination",
             }
             if not args.no_direction_viz
             else None,

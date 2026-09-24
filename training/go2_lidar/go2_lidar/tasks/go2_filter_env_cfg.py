@@ -117,6 +117,7 @@ class Go2FilterEnvCfg(DirectRLEnvCfg):
     use_keyboard = False
     no_obstacle = False
     use_dynamic_obstacle = False
+    num_dynamic_obstacles = 3
     wait_for_key = True
     obst_speed_range = (0.5, 1.5)
 
